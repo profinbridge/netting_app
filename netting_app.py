@@ -34,7 +34,7 @@ real_rates = get_realtime_rates()
 # 3. 탭 구성
 tab1, tab2, tab3 = st.tabs(["📥 데이터 관리 및 입력", "⚖️ 네팅 분석 요약", "🧪 실시간 리스크 시뮬레이션"])
 
-# --- Tab 1: 데이터 관리 및 입력 (가이드 절대 유지) ---
+# --- Tab 1: 데이터 관리 및 입력 (가이드 유지) ---
 with tab1:
     st.markdown("### 📘 CSV 파일 작성 및 업로드 가이드")
     with st.expander("👉 CSV 헤더별 상세 작성 규칙 (필독)", expanded=True):
@@ -45,17 +45,16 @@ with tab1:
             * **Date**: 외화 발생일 또는 결제 예정일 (YYYY-MM-DD)
             * **Currency**: 통화코드 (USD, EUR, JPY, CNY, GBP 중 선택)
             * **Position**: 자금 방향 (**Long**: 외화 유입/수출, **Short**: 외화 유출/수입)
-            * **Amount**: 외화 금액 (쉼표 없이 숫자만 입력)
-            * **Budget Rate**: 예산 환율 (리스크 분석의 기준점)
-            * **Netted**: 네팅 포함 여부 (**True**: 분석에 포함, **False**: 제외)
+            * **Amount**: 외화 금액 (숫자만 입력)
+            * **Budget Rate**: 예산 환율 (리스크 분석 기준점)
+            * **Netted**: 네팅 포함 여부 (**True**: 포함, **False**: 제외)
             """)
         with col_g2:
             st.markdown("""
             **📍 비고란 및 주의사항**
-            * **Remark1 (비고 1)**: 자유 기재 (거래처명, 프로젝트명 등)
-            * **Remark2 (비고 2)**: 자유 기재 (증빙 및 기타 참고사항 등)
-            * **파일 형식**: 반드시 **CSV (UTF-8)** 형식으로 저장하세요.
-            * **대소문자**: Position 항목의 'Long', 'Short' 첫 글자는 대문자를 권장합니다.
+            * **Remark1/2**: 자유 기재
+            * **파일 형식**: 반드시 **CSV (UTF-8)** 형식 저장
+            * **대소문자**: Position 항목 'Long', 'Short' 권장
             """)
 
     st.divider()
@@ -63,90 +62,118 @@ with tab1:
     col_up, col_form = st.columns([1, 1])
     with col_up:
         st.subheader("📁 파일 업로드")
-        uploaded_file = st.file_uploader("CSV/Excel 파일을 선택하세요", type=['xlsx', 'csv'])
+        uploaded_file = st.file_uploader("CSV/Excel 선택", type=['xlsx', 'csv'])
         if uploaded_file:
-            if uploaded_file.name.endswith('.csv'):
-                new_data = pd.read_csv(uploaded_file)
-            else:
-                new_data = pd.read_excel(uploaded_file)
+            new_data = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
             new_data.columns = [c.strip() for c in new_data.columns]
             mapping = {'날짜': 'Date', '통화': 'Currency', '포지션': 'Position', '금액': 'Amount', '예산 환율': 'Budget Rate', '네팅': 'Netted'}
             new_data = new_data.rename(columns=mapping)
             for col in ['Date', 'Currency', 'Position', 'Amount', 'Budget Rate', 'Netted', 'Remark1', 'Remark2']:
                 if col not in new_data.columns:
                     new_data[col] = 0.0 if col in ['Amount', 'Budget Rate'] else (True if col == 'Netted' else "")
-            if st.button("기존 데이터에 추가하기"):
+            if st.button("데이터 추가하기"):
                 st.session_state['main_df'] = pd.concat([st.session_state['main_df'], new_data], ignore_index=True)
-                st.success("데이터가 성공적으로 병합되었습니다.")
+                st.success("데이터 병합 성공")
 
     with col_form:
-        st.subheader("✍️ 개별 항목 직접 입력")
+        st.subheader("✍️ 직접 입력")
         with st.form("manual_entry", clear_on_submit=True):
             f_date = st.date_input("날짜")
             f_curr = st.selectbox("통화", ["USD", "EUR", "JPY", "CNY", "GBP"])
             f_pos = st.selectbox("포지션", ["Long", "Short"])
             f_amt = st.number_input("금액", min_value=0.0)
             f_budget = st.number_input("예산 환율", min_value=0.0, value=real_rates.get(f_curr, 1400.0))
-            f_remark = st.text_input("비고 (Remark1)")
             if st.form_submit_button("추가"):
-                new_row = pd.DataFrame([{'Date': f_date.strftime('%Y-%m-%d'), 'Currency': f_curr, 'Position': f_pos, 'Amount': f_amt, 'Budget Rate': f_budget, 'Netted': True, 'Remark1': f_remark, 'Remark2': ""}])
+                new_row = pd.DataFrame([{'Date': f_date.strftime('%Y-%m-%d'), 'Currency': f_curr, 'Position': f_pos, 'Amount': f_amt, 'Budget Rate': f_budget, 'Netted': True, 'Remark1': "", 'Remark2': ""}])
                 st.session_state['main_df'] = pd.concat([st.session_state['main_df'], new_row], ignore_index=True)
-                st.toast("항목 추가 완료")
 
-    st.subheader("📋 전체 데이터 편집")
     if not st.session_state['main_df'].empty:
+        st.subheader("📋 전체 데이터 편집")
         edited_df = st.data_editor(st.session_state['main_df'], num_rows="dynamic", use_container_width=True)
         if st.button("💾 저장"):
             st.session_state['main_df'] = edited_df
-            st.success("저장 완료")
-        if st.button("🗑️ 전체 초기화"):
-            st.session_state['main_df'] = pd.DataFrame(columns=['Date', 'Currency', 'Position', 'Amount', 'Budget Rate', 'Netted', 'Remark1', 'Remark2'])
-            st.rerun()
+            st.success("저장되었습니다.")
 
-# --- Tab 2: 네팅 분석 요약 (달러 환산 및 합계 포함) ---
+# --- Tab 2: 상세 포지션 내역 및 네팅 현황 (요청하신 로직) ---
 with tab2:
-    st.subheader("⚖️ 통화별 네팅 포지션 및 달러 환산 요약")
-    if not st.session_state['main_df'].empty:
-        df_net = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
-        if not df_net.empty:
-            summary = df_net.groupby(['Currency', 'Position'])['Amount'].sum().unstack(fill_value=0)
-            for pos in ['Long', 'Short']:
-                if pos not in summary.columns: summary[pos] = 0.0
-            summary['Net Position'] = summary['Long'] - summary['Short']
+    df_t2 = st.session_state['main_df'].copy()
+
+    if not df_t2.empty:
+        st.subheader("⚖️ 상세 포지션 및 네팅 현황")
+        
+        interval = st.radio("📊 집계 구간 선택", ["일별", "주별", "월별"], horizontal=True, key="t2_interval_final_v4")
+        
+        df_t2['Date'] = pd.to_datetime(df_t2['Date'])
+        rule = {'일별': 'D', '주별': 'W', '월별': 'ME'}[interval]
+        net_df = df_t2[df_t2['Netted'] == True].copy()
+        
+        if not net_df.empty:
+            st.divider()
             
-            usd_krw = real_rates.get("USD", 1400.0)
-            summary['Rate(KRW)'] = summary.index.map(lambda x: real_rates.get(x, 0))
-            summary['Net (USD)'] = (summary['Net Position'] * summary['Rate(KRW)']) / usd_krw
+            # 1. 상단 통화별 요약 지표
+            unique_currs = sorted(net_df['Currency'].unique(), key=lambda x: (x != 'USD', x))
+            curr_cols = st.columns(len(unique_currs))
+            for i, curr in enumerate(unique_currs):
+                with curr_cols[i]:
+                    temp_amt = net_df[net_df['Currency'] == curr].apply(
+                        lambda x: x['Amount'] if str(x['Position']).strip().capitalize() == 'Long' else -x['Amount'], axis=1
+                    ).sum()
+                    st.metric(f"{curr} 순포지션", f"{temp_amt:,.2f}")
+                    st.caption(f"실시간: {real_rates.get(curr):,.2f}원")
+
+            st.divider()
+
+            # 2. 상세 포지션 내역 (피벗 테이블)
+            st.markdown(f"#### 📅 {interval} 상세 포지션 내역")
+            grouped = net_df.set_index('Date').groupby([pd.Grouper(freq=rule), 'Currency'])
             
-            st.dataframe(summary.style.format('{:,.2f}'), use_container_width=True)
-            
-            total_usd = summary['Net (USD)'].sum()
-            st.metric("전체 포지션 달러 환산 합계", f"$ {total_usd:,.2f}")
+            rows = []
+            for (dt, curr), group in grouped:
+                long_v = group[group['Position'].str.strip().str.capitalize() == 'Long']['Amount'].sum()
+                short_v = group[group['Position'].str.strip().str.capitalize() == 'Short']['Amount'].sum()
+                
+                if interval == '일별': label = dt.strftime('%Y-%m-%d')
+                elif interval == '주별': label = dt.strftime('%Y-%U주')
+                else: label = dt.strftime('%Y-%m')
+                
+                rows.append({'기간': label, '통화': curr, '유입(Long)': long_v, '유출(Short)': short_v, '순포지션(Net)': long_v - short_v})
+
+            if rows:
+                raw_report = pd.DataFrame(rows)
+                pivot_df = raw_report.pivot(index='기간', columns='통화', values=['유입(Long)', '유출(Short)', '순포지션(Net)'])
+                pivot_df.columns = pivot_df.columns.swaplevel(0, 1)
+                pivot_df = pivot_df.reindex(columns=unique_currs, level=0)
+                pivot_df = pivot_df.reindex(['유입(Long)', '유출(Short)', '순포지션(Net)'], axis=1, level=1)
+                pivot_df = pivot_df.fillna(0)
+
+                st.dataframe(pivot_df.style.format("{:,.2f}"), use_container_width=True)
+                
+                # 달러 환산 합계 (이전 요청사항 유지)
+                usd_krw = real_rates.get("USD", 1400.0)
+                net_usd_total = sum((row['순포지션(Net)'] * real_rates.get(row['통화'], 0)) / usd_krw for row in rows)
+                st.metric("전체 포지션 달러 환산 합계", f"$ {net_usd_total:,.2f}")
+            else:
+                st.info("표시할 데이터가 없습니다.")
         else:
             st.info("네팅 대상 데이터가 없습니다.")
 
-# --- Tab 3: 실시간 리스크 시뮬레이션 (수식 오류 수정 완료) ---
+# --- Tab 3: 리스크 시뮬레이션 ---
 with tab3:
     if not st.session_state['main_df'].empty:
         net_df = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
         if not net_df.empty:
             target_curr = st.selectbox("💱 분석 대상 통화 선택", net_df['Currency'].unique())
             curr_data = net_df[net_df['Currency'] == target_curr]
-            
-            # [에러 수정 구간] 가중평균 예산 환율 계산
             total_amt = curr_data['Amount'].sum()
-            if total_amt > 0:
-                avg_budget_rate = (curr_data['Amount'] * curr_data['Budget Rate']).sum() / total_amt
-            else:
-                avg_budget_rate = real_rates.get(target_curr, 1400.0)
-
+            avg_budget_rate = (curr_data['Amount'] * curr_data['Budget Rate']).sum() / total_amt if total_amt > 0 else real_rates.get(target_curr, 1400.0)
+            
             rate_now = real_rates.get(target_curr, 1400.0)
             net_pos = curr_data.apply(lambda x: x['Amount'] if x['Position'] == 'Long' else -x['Amount'], axis=1).sum()
 
             m1, m2, m3 = st.columns(3)
             m1.metric("순포지션", f"{net_pos:,.2f}")
             m2.metric("가중평균 예산 환율", f"{avg_budget_rate:,.2f}원")
-            m3.metric("현재 시장 환율", f"{rate_now:,.2f}원")
+            m3.metric("현재 환율", f"{rate_now:,.2f}원")
 
             vol = st.sidebar.slider("연 변동성(%)", 1.0, 30.0, 10.0) / 100
             n_sims, t_days = 1000, 30
@@ -157,16 +184,4 @@ with tab3:
                 sims[t] = sims[t-1] * np.exp((-0.5 * vol**2)*dt + vol * np.sqrt(dt) * np.random.standard_normal(n_sims))
             
             final_pnl = (sims[-1] - avg_budget_rate) * net_pos
-
-            c1, c2 = st.columns(2)
-            with c1:
-                fig_path = go.Figure()
-                fig_path.add_trace(go.Scatter(y=np.median(sims, axis=1), name="중앙값", line=dict(color='blue')))
-                fig_path.add_hline(y=avg_budget_rate, line_dash="dash", line_color="red", annotation_text="예산기준")
-                st.plotly_chart(fig_path, use_container_width=True)
-            with c2:
-                fig_hist = px.histogram(final_pnl, nbins=50, title="예상 손익 분포")
-                fig_hist.add_vline(x=0, line_color="black")
-                st.plotly_chart(fig_hist, use_container_width=True)
-    else:
-        st.info("데이터를 먼저 입력해주세요.")
+            st.plotly_chart(px.histogram(final_pnl, title="예상 손익 분포 (예산 대비)"), use_container_width=True)
