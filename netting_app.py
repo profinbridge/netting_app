@@ -15,7 +15,7 @@ if 'main_df' not in st.session_state:
         'Date', 'Currency', 'Position', 'Amount', 'Budget Rate', 'Netted', 'Remark1', 'Remark2'
     ])
 
-# 실시간 환율 엔진 (USD 기준 환산을 위해 USD 환율 포함)
+# 실시간 환율 엔진
 @st.cache_data(ttl=3600)
 def get_realtime_rates():
     tickers = {"USD": "USDKRW=X", "EUR": "EURKRW=X", "JPY": "JPYKRW=X", "CNY": "CNYKRW=X", "GBP": "GBPKRW=X"}
@@ -60,7 +60,6 @@ with tab1:
 
     st.divider()
     
-    # 데이터 업로드 및 직접 입력 로직 (기존과 동일)
     col_up, col_form = st.columns([1, 1])
     with col_up:
         st.subheader("📁 파일 업로드")
@@ -78,7 +77,7 @@ with tab1:
                     new_data[col] = 0.0 if col in ['Amount', 'Budget Rate'] else (True if col == 'Netted' else "")
             if st.button("기존 데이터에 추가하기"):
                 st.session_state['main_df'] = pd.concat([st.session_state['main_df'], new_data], ignore_index=True)
-                st.success("데이터가 병합되었습니다.")
+                st.success("데이터가 성공적으로 병합되었습니다.")
 
     with col_form:
         st.subheader("✍️ 개별 항목 직접 입력")
@@ -97,51 +96,36 @@ with tab1:
     st.subheader("📋 전체 데이터 편집")
     if not st.session_state['main_df'].empty:
         edited_df = st.data_editor(st.session_state['main_df'], num_rows="dynamic", use_container_width=True)
-        if st.button("💾 변경사항 저장"):
+        if st.button("💾 저장"):
             st.session_state['main_df'] = edited_df
-            st.success("저장되었습니다.")
+            st.success("저장 완료")
+        if st.button("🗑️ 전체 초기화"):
+            st.session_state['main_df'] = pd.DataFrame(columns=['Date', 'Currency', 'Position', 'Amount', 'Budget Rate', 'Netted', 'Remark1', 'Remark2'])
+            st.rerun()
 
-# --- Tab 2: 네팅 분석 요약 (요청하신 달러 환산 로직 적용) ---
+# --- Tab 2: 네팅 분석 요약 (달러 환산 및 합계 포함) ---
 with tab2:
     st.subheader("⚖️ 통화별 네팅 포지션 및 달러 환산 요약")
     if not st.session_state['main_df'].empty:
         df_net = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
-        
         if not df_net.empty:
-            # 1. 통화별 Long/Short 합계 계산
             summary = df_net.groupby(['Currency', 'Position'])['Amount'].sum().unstack(fill_value=0)
             for pos in ['Long', 'Short']:
                 if pos not in summary.columns: summary[pos] = 0.0
-            
             summary['Net Position'] = summary['Long'] - summary['Short']
             
-            # 2. 달러 환산액 계산 (행 끝에 추가)
-            # 환산 공식: (해당통화/KRW) / (USD/KRW)
             usd_krw = real_rates.get("USD", 1400.0)
-            summary['Current Rate(KRW)'] = summary.index.map(lambda x: real_rates.get(x, 0))
-            summary['Net Amount (USD)'] = (summary['Net Position'] * summary['Current Rate(KRW)']) / usd_krw
+            summary['Rate(KRW)'] = summary.index.map(lambda x: real_rates.get(x, 0))
+            summary['Net (USD)'] = (summary['Net Position'] * summary['Rate(KRW)']) / usd_krw
             
-            # 3. 테이블 출력 (통화별 합계 포함)
-            st.dataframe(
-                summary.style.format({
-                    'Long': '{:,.2f}', 'Short': '{:,.2f}', 'Net Position': '{:,.2f}',
-                    'Current Rate(KRW)': '{:,.2f}', 'Net Amount (USD)': '{:,.2f}'
-                }),
-                use_container_width=True
-            )
+            st.dataframe(summary.style.format('{:,.2f}'), use_container_width=True)
             
-            # 4. 하단 전체 달러 환산 합계 (Metric)
-            total_usd_value = summary['Net Amount (USD)'].sum()
-            st.markdown("---")
-            col_total1, col_total2 = st.columns(2)
-            with col_total1:
-                st.metric("전체 포지션 달러 환산 합계", f"$ {total_usd_value:,.2f}")
-            with col_total2:
-                st.caption(f" 기준 환율 (USD/KRW): {usd_krw:,.2f}원")
+            total_usd = summary['Net (USD)'].sum()
+            st.metric("전체 포지션 달러 환산 합계", f"$ {total_usd:,.2f}")
         else:
             st.info("네팅 대상 데이터가 없습니다.")
 
-# --- Tab 3: 리스크 시뮬레이션 (기본 유지) ---
+# --- Tab 3: 실시간 리스크 시뮬레이션 (수식 오류 수정 완료) ---
 with tab3:
     if not st.session_state['main_df'].empty:
         net_df = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
@@ -149,5 +133,40 @@ with tab3:
             target_curr = st.selectbox("💱 분석 대상 통화 선택", net_df['Currency'].unique())
             curr_data = net_df[net_df['Currency'] == target_curr]
             
+            # [에러 수정 구간] 가중평균 예산 환율 계산
             total_amt = curr_data['Amount'].sum()
-            avg_budget_rate = (curr_data)'
+            if total_amt > 0:
+                avg_budget_rate = (curr_data['Amount'] * curr_data['Budget Rate']).sum() / total_amt
+            else:
+                avg_budget_rate = real_rates.get(target_curr, 1400.0)
+
+            rate_now = real_rates.get(target_curr, 1400.0)
+            net_pos = curr_data.apply(lambda x: x['Amount'] if x['Position'] == 'Long' else -x['Amount'], axis=1).sum()
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("순포지션", f"{net_pos:,.2f}")
+            m2.metric("가중평균 예산 환율", f"{avg_budget_rate:,.2f}원")
+            m3.metric("현재 시장 환율", f"{rate_now:,.2f}원")
+
+            vol = st.sidebar.slider("연 변동성(%)", 1.0, 30.0, 10.0) / 100
+            n_sims, t_days = 1000, 30
+            dt = 1/252
+            sims = np.zeros((t_days, n_sims))
+            sims[0] = rate_now
+            for t in range(1, t_days):
+                sims[t] = sims[t-1] * np.exp((-0.5 * vol**2)*dt + vol * np.sqrt(dt) * np.random.standard_normal(n_sims))
+            
+            final_pnl = (sims[-1] - avg_budget_rate) * net_pos
+
+            c1, c2 = st.columns(2)
+            with c1:
+                fig_path = go.Figure()
+                fig_path.add_trace(go.Scatter(y=np.median(sims, axis=1), name="중앙값", line=dict(color='blue')))
+                fig_path.add_hline(y=avg_budget_rate, line_dash="dash", line_color="red", annotation_text="예산기준")
+                st.plotly_chart(fig_path, use_container_width=True)
+            with c2:
+                fig_hist = px.histogram(final_pnl, nbins=50, title="예상 손익 분포")
+                fig_hist.add_vline(x=0, line_color="black")
+                st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.info("데이터를 먼저 입력해주세요.")
