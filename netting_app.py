@@ -156,23 +156,26 @@ with tab2:
                 # --- Tab 2: 합계 및 달러 환산액 행 계산 부분 ---
                 sum_values = pivot_df.sum()
                 
-                # 1. 합계 행 생성
+                # 1. 합계 행 생성 (기존 수치 합계)
                 sum_df = pd.DataFrame(sum_values).T
                 sum_df.index = ['합계(Total)']
                 
-                # 2. 달러 환산액 전용 행 계산 (모든 컬럼 표시 로직)
+                # 2. 달러 환산액 전용 행 계산
                 usd_conv_data = {}
                 for col in pivot_df.columns:
                     curr, category = col
                     val = sum_values[col]
                     
-                    # 순포지션, 유입, 유출 모든 항목에 대해 달러 환산액 계산
-                    rate = real_rates.get(curr, 0)
-                    if curr == "USD":
+                    # [수정] 모든 컬럼(유입, 유출, 순포지션, 전체합계)에 대해 달러 환산 수행
+                    if curr == "전체":
+                        # '전체' 통화의 '달러환산 합계(USD)'는 이미 달러이므로 그대로 사용
                         usd_conv_data[col] = val
                     else:
-                        # 타 통화는 현재 환율로 달러 가치 계산
-                        usd_conv_data[col] = (val * rate / usd_krw)
+                        rate = real_rates.get(curr, 0)
+                        if curr == "USD":
+                            usd_conv_data[col] = val
+                        else:
+                            usd_conv_data[col] = (val * rate / usd_krw)
                 
                 usd_conv_df = pd.DataFrame([usd_conv_data])
                 usd_conv_df.index = ['달러 환산액(USD)']
@@ -184,8 +187,10 @@ with tab2:
                 st.markdown(f"#### 📅 {interval} 상세 내역")
                 
                 styled_df = final_df.style.format("{:,.2f}") \
-                    .set_properties(**{'background-color': '#f0f2f6', 'font-weight': 'bold'}, subset=(['합계(Total)'], pd.IndexSlice[:, :])) \
-                    .set_properties(**{'color': 'blue', 'font-weight': 'bold'}, subset=(['달러 환산액(USD)'], pd.IndexSlice[:, :]))
+                    .set_properties(**{'background-color': '#f0f2f6', 'font-weight': 'bold'}, 
+                                    subset=(['합계(Total)'], pd.IndexSlice[:, :])) \
+                    .set_properties(**{'color': 'blue', 'font-weight': 'bold'}, 
+                                    subset=(['달러 환산액(USD)'], pd.IndexSlice[:, :]))
                 
                 st.dataframe(styled_df, use_container_width=True)
                 
