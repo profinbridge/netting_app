@@ -95,63 +95,73 @@ with tab1:
             st.success("저장되었습니다.")
 
 # --- Tab 2: 상세 포지션 내역 및 네팅 현황 (요청하신 로직) ---
+# --- Tab 2: 상세 포지션 내역 및 네팅 현황 (수정본) ---
 with tab2:
     df_t2 = st.session_state['main_df'].copy()
 
     if not df_t2.empty:
         st.subheader("⚖️ 상세 포지션 및 네팅 현황")
         
-        interval = st.radio("📊 집계 구간 선택", ["일별", "주별", "월별"], horizontal=True, key="t2_interval_final_v4")
+        interval = st.radio("📊 집계 구간 선택", ["일별", "주별", "월별"], horizontal=True, key="t2_interval_v5")
         
         df_t2['Date'] = pd.to_datetime(df_t2['Date'])
         rule = {'일별': 'D', '주별': 'W', '월별': 'ME'}[interval]
         net_df = df_t2[df_t2['Netted'] == True].copy()
         
         if not net_df.empty:
-            st.divider()
-            
-            # 1. 상단 통화별 요약 지표
+            # 1. 상단 요약 지표 (기존 유지)
             unique_currs = sorted(net_df['Currency'].unique(), key=lambda x: (x != 'USD', x))
-            curr_cols = st.columns(len(unique_currs))
-            for i, curr in enumerate(unique_currs):
-                with curr_cols[i]:
-                    temp_amt = net_df[net_df['Currency'] == curr].apply(
-                        lambda x: x['Amount'] if str(x['Position']).strip().capitalize() == 'Long' else -x['Amount'], axis=1
-                    ).sum()
-                    st.metric(f"{curr} 순포지션", f"{temp_amt:,.2f}")
-                    st.caption(f"실시간: {real_rates.get(curr):,.2f}원")
-
-            st.divider()
-
-            # 2. 상세 포지션 내역 (피벗 테이블)
-            st.markdown(f"#### 📅 {interval} 상세 포지션 내역")
-            grouped = net_df.set_index('Date').groupby([pd.Grouper(freq=rule), 'Currency'])
+            usd_krw = real_rates.get("USD", 1400.0)
             
+            # 2. 데이터 집계 및 피벗
+            grouped = net_df.set_index('Date').groupby([pd.Grouper(freq=rule), 'Currency'])
             rows = []
             for (dt, curr), group in grouped:
                 long_v = group[group['Position'].str.strip().str.capitalize() == 'Long']['Amount'].sum()
                 short_v = group[group['Position'].str.strip().str.capitalize() == 'Short']['Amount'].sum()
+                net_v = long_v - short_v
+                
+                # 행별 달러 환산액 계산
+                rate = real_rates.get(curr, 0)
+                usd_val = (net_v * rate) / usd_krw if curr != "USD" else net_v
                 
                 if interval == '일별': label = dt.strftime('%Y-%m-%d')
                 elif interval == '주별': label = dt.strftime('%Y-%U주')
                 else: label = dt.strftime('%Y-%m')
                 
-                rows.append({'기간': label, '통화': curr, '유입(Long)': long_v, '유출(Short)': short_v, '순포지션(Net)': long_v - short_v})
+                rows.append({
+                    '기간': label, '통화': curr, 
+                    '유입(Long)': long_v, '유출(Short)': short_v, 
+                    '순포지션(Net)': net_v, '달러환산(USD)': usd_val
+                })
 
             if rows:
                 raw_report = pd.DataFrame(rows)
-                pivot_df = raw_report.pivot(index='기간', columns='통화', values=['유입(Long)', '유출(Short)', '순포지션(Net)'])
+                
+                # 피벗 생성 (유입, 유출, 순포지션, 달러환산 모두 포함)
+                pivot_df = raw_report.pivot(index='기간', columns='통화', values=['유입(Long)', '유출(Short)', '순포지션(Net)', '달러환산(USD)'])
+                
+                # 컬럼 구조 변경 (통화, 항목)
                 pivot_df.columns = pivot_df.columns.swaplevel(0, 1)
                 pivot_df = pivot_df.reindex(columns=unique_currs, level=0)
-                pivot_df = pivot_df.reindex(['유입(Long)', '유출(Short)', '순포지션(Net)'], axis=1, level=1)
+                pivot_df = pivot_df.reindex(['유입(Long)', '유출(Short)', '순포지션(Net)', '달러환산(USD)'], axis=1, level=1)
                 pivot_df = pivot_df.fillna(0)
 
-                st.dataframe(pivot_df.style.format("{:,.2f}"), use_container_width=True)
+                # --- 수정 핵심: 합계 행 추가 ---
+                sum_row = pivot_df.sum().to_frame().T
+                sum_row.index = ['합계(Total)']
+                final_display_df = pd.concat([pivot_df, sum_row])
+
+                # 스타일링 및 출력
+                st.dataframe(
+                    final_display_df.style.format("{:,.2f}")
+                    .set_properties(**{'background-color': '#f0f2f6'}, subset=(['합계(Total)'], pd.IndexSlice[:, :])),
+                    use_container_width=True
+                )
                 
-                # 달러 환산 합계 (이전 요청사항 유지)
-                usd_krw = real_rates.get("USD", 1400.0)
-                net_usd_total = sum((row['순포지션(Net)'] * real_rates.get(row['통화'], 0)) / usd_krw for row in rows)
-                st.metric("전체 포지션 달러 환산 합계", f"$ {net_usd_total:,.2f}")
+                # 하단 전체 달러 합계 요약
+                total_usd_sum = sum_row.xs('달러환산(USD)', axis=1, level=1).sum(axis=1).iloc[0]
+                st.markdown(f"### 🚩 최종 포지션 합계: **$ {total_usd_sum:,.2f}**")
             else:
                 st.info("표시할 데이터가 없습니다.")
         else:
