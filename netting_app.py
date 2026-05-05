@@ -94,26 +94,38 @@ with tab1:
             st.session_state['main_df'] = edited_df
             st.success("저장되었습니다.")
 
-# --- Tab 2: 상세 포지션 내역 및 네팅 현황 (요청하신 로직) ---
-# --- Tab 2: 상세 포지션 내역 및 네팅 현황 (수정본) ---
+# --- Tab 2: 상세 포지션 내역 및 네팅 현황 ---
 with tab2:
     df_t2 = st.session_state['main_df'].copy()
 
     if not df_t2.empty:
         st.subheader("⚖️ 상세 포지션 및 네팅 현황")
         
-        interval = st.radio("📊 집계 구간 선택", ["일별", "주별", "월별"], horizontal=True, key="t2_interval_v5")
+        interval = st.radio("📊 집계 구간 선택", ["일별", "주별", "월별"], horizontal=True, key="t2_interval_final_v6")
         
         df_t2['Date'] = pd.to_datetime(df_t2['Date'])
         rule = {'일별': 'D', '주별': 'W', '월별': 'ME'}[interval]
         net_df = df_t2[df_t2['Netted'] == True].copy()
         
         if not net_df.empty:
-            # 1. 상단 요약 지표 (기존 유지)
+            # 1. 상단 통화별 순포지션 요약 (유입/유출/순포지션 상세)
             unique_currs = sorted(net_df['Currency'].unique(), key=lambda x: (x != 'USD', x))
-            usd_krw = real_rates.get("USD", 1400.0)
+            usd_krw = real_rates.get("USD", 1475.0) # 실시간 환율 적용
             
-            # 2. 데이터 집계 및 피벗
+            st.markdown("#### 📑 통화별 요약 지표")
+            curr_summary_cols = st.columns(len(unique_currs))
+            for i, curr in enumerate(unique_currs):
+                with curr_summary_cols[i]:
+                    c_data = net_df[net_df['Currency'] == curr]
+                    l_sum = c_data[c_data['Position'].str.capitalize() == 'Long']['Amount'].sum()
+                    s_sum = c_data[c_data['Position'].str.capitalize() == 'Short']['Amount'].sum()
+                    n_sum = l_sum - s_sum
+                    st.metric(f"{curr} 순포지션", f"{n_sum:,.2f}")
+                    st.caption(f"유입: {l_sum:,.0f} / 유출: {s_sum:,.0f}")
+
+            st.divider()
+
+            # 2. 데이터 집계 및 행별 달러 합산 로직
             grouped = net_df.set_index('Date').groupby([pd.Grouper(freq=rule), 'Currency'])
             rows = []
             for (dt, curr), group in grouped:
@@ -121,51 +133,55 @@ with tab2:
                 short_v = group[group['Position'].str.strip().str.capitalize() == 'Short']['Amount'].sum()
                 net_v = long_v - short_v
                 
-                # 행별 달러 환산액 계산
-                rate = real_rates.get(curr, 0)
-                usd_val = (net_v * rate) / usd_krw if curr != "USD" else net_v
+                # 행별 달러 환산 가치 계산
+                curr_rate = real_rates.get(curr, 0)
+                usd_val = (net_v * curr_rate) / usd_krw if curr != "USD" else net_v
                 
-                if interval == '일별': label = dt.strftime('%Y-%m-%d')
-                elif interval == '주별': label = dt.strftime('%Y-%U주')
-                else: label = dt.strftime('%Y-%m')
+                label = dt.strftime('%Y-%m-%d') if interval == '일별' else (dt.strftime('%Y-%U주') if interval == '주별' else dt.strftime('%Y-%m'))
                 
                 rows.append({
                     '기간': label, '통화': curr, 
-                    '유입(Long)': long_v, '유출(Short)': short_v, 
-                    '순포지션(Net)': net_v, '달러환산(USD)': usd_val
+                    '유입(Long)': long_v, '유출(Short)': short_v, '순포지션(Net)': net_v,
+                    '행_달러환산': usd_val
                 })
 
             if rows:
                 raw_report = pd.DataFrame(rows)
-                
-                # 피벗 생성 (유입, 유출, 순포지션, 달러환산 모두 포함)
-                pivot_df = raw_report.pivot(index='기간', columns='통화', values=['유입(Long)', '유출(Short)', '순포지션(Net)', '달러환산(USD)'])
-                
-                # 컬럼 구조 변경 (통화, 항목)
+                # 통화별 유입/유출/순포지션 피벗 (달러환산은 여기서 일단 제외)
+                pivot_df = raw_report.pivot(index='기간', columns='통화', values=['유입(Long)', '유출(Short)', '순포지션(Net)'])
                 pivot_df.columns = pivot_df.columns.swaplevel(0, 1)
                 pivot_df = pivot_df.reindex(columns=unique_currs, level=0)
-                pivot_df = pivot_df.reindex(['유입(Long)', '유출(Short)', '순포지션(Net)', '달러환산(USD)'], axis=1, level=1)
+                pivot_df = pivot_df.reindex(['유입(Long)', '유출(Short)', '순포지션(Net)'], axis=1, level=1)
+                
+                # 행 끝에 달러환산 합계액 컬럼 추가
+                row_usd_total = raw_report.groupby('기간')['행_달러환산'].sum()
+                pivot_df[('전체', '달러환산 합계(USD)')] = row_usd_total
+                
                 pivot_df = pivot_df.fillna(0)
 
-                # --- 수정 핵심: 합계 행 추가 ---
+                # 3. 하단 합계 행 추가
                 sum_row = pivot_df.sum().to_frame().T
                 sum_row.index = ['합계(Total)']
-                final_display_df = pd.concat([pivot_df, sum_row])
+                final_df = pd.concat([pivot_df, sum_row])
 
-                # 스타일링 및 출력
+                # 테이블 출력
+                st.markdown(f"#### 📅 {interval} 상세 내역 및 행별 달러 환산")
                 st.dataframe(
-                    final_display_df.style.format("{:,.2f}")
-                    .set_properties(**{'background-color': '#f0f2f6'}, subset=(['합계(Total)'], pd.IndexSlice[:, :])),
+                    final_df.style.format("{:,.2f}")
+                    .set_properties(**{'background-color': '#f0f2f6', 'font-weight': 'bold'}, subset=(['합계(Total)'], pd.IndexSlice[:, :])),
                     use_container_width=True
                 )
                 
-                # 하단 전체 달러 합계 요약
-                total_usd_sum = sum_row.xs('달러환산(USD)', axis=1, level=1).sum(axis=1).iloc[0]
-                st.markdown(f"### 🚩 최종 포지션 합계: **$ {total_usd_sum:,.2f}**")
+                # 4. 최종 달러환산액 표시 (굵은 파란색)
+                total_usd_final = sum_row[('전체', '달러환산 합계(USD)')].iloc[0]
+                st.markdown(f"""
+                <div style="text-align: right; padding: 20px;">
+                    <span style="font-size: 1.2em; font-weight: bold;">최종 포지션 달러환산 합계: </span>
+                    <span style="font-size: 2em; font-weight: bold; color: #0000FF;">$ {total_usd_final:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.info("표시할 데이터가 없습니다.")
-        else:
-            st.info("네팅 대상 데이터가 없습니다.")
+                st.info("데이터가 없습니다.")
 
 # --- Tab 3: 리스크 시뮬레이션 ---
 with tab3:
