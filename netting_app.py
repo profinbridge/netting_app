@@ -150,4 +150,4 @@ with tab3:
             curr_data = net_df[net_df['Currency'] == target_curr]
             
             total_amt = curr_data['Amount'].sum()
-            avg_budget_rate = (curr_data['
+            avg_budget_rate = (curr_data)'
