@@ -237,106 +237,128 @@ with tab2:
                 # (선택사항) 테이블 바로 아래에 작은 글씨로 한 번 더 표시하고 싶을 때
                 # st.caption(f"※ 위 데이터는 {last_update} 기준 실시간 시장 환율을 반영하고 있습니다.")
 
-# --- Tab 3: 실시간 리스크 시뮬레이션 (현가 분석 및 몬테카를로) ---
+# --- Tab 3: 실시간 리스크 시뮬레이션 및 리스크 분석 ---
 with tab3:
-    st.header("🧪 외환 리스크 시뮬레이션 및 포트폴리오 분석")
+    st.header("🧪 외환 리스크 시뮬레이션 및 리스크 분석")
     
-    # 분석 대상 데이터 필터링 (Netted가 True인 데이터만)
-    df_netting = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
+    df_sim = st.session_state['main_df'][st.session_state['main_df']['Netted'] == True].copy()
     
-    if not df_netting.empty:
-        with st.expander("🌐 시장 데이터 및 시뮬레이션 설정", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                # 현물 환율 및 변동성 설정
-                current_spot = real_rates.get("USD", 1380.0)
-                sim_spot = st.number_input("기준 USD/KRW 환율", value=float(current_spot), key="sim_spot")
-                volatility = st.slider("연 변동성 (%)", 5.0, 30.0, 12.0) / 100
-            with c2:
-                # 금리 설정 (수정 시 탭 2의 PV 계산에도 즉시 반영됨)
-                r_usd = st.number_input("USD 이자율", value=st.session_state['market_rates']['USD'], format="%.4f", key="sim_r_usd")
-                r_krw = st.number_input("KRW 이자율", value=st.session_state['market_rates']['KRW'], format="%.4f", key="sim_r_krw")
-                
-                # 세션 상태 업데이트
-                st.session_state['market_rates']['USD'] = r_usd
-                st.session_state['market_rates']['KRW'] = r_krw
-            with c3:
-                iter_count = st.select_slider("시뮬레이션 횟수", options=[100, 500, 1000], value=500)
-                target_rate = st.number_input("목표(예산) 환율", value=1350.0)
+    if not df_sim.empty:
+        col_side, col_main = st.columns([1, 3])
 
-        # --- [로직 확인] 포트폴리오 스케줄별 현가(PV) 계산 ---
-        valuation_date = datetime.now()
-        portfolio_results = []
-        
-        for _, row in df_netting.iterrows():
-            target_date = pd.to_datetime(row['Date'])
-            days = max((target_date - valuation_date).days, 0)
-            curr = row['Currency']
-            amt = float(row['Amount']) if str(row['Position']).capitalize() == 'Long' else -abs(float(row['Amount']))
+        with col_side:
+            st.subheader("🌐 시장 변수 설정")
+            with st.container(border=True):
+                cur_usd_spot = float(real_rates.get("USD", 1380.0))
+                sim_spot = st.number_input("현재 환율 (Spot)", value=cur_usd_spot, step=1.0)
+                sim_days = st.slider("분석 기간 (일)", 10, 365, 90)
+                volatility = st.slider("시장 변동성 (연 %)", 5.0, 30.0, 12.0) / 100
+                r_krw = st.number_input("원화 금리 (%)", value=st.session_state['market_rates']['KRW']*100, format="%.2f") / 100
+                r_usd = st.number_input("미국 금리 (%)", value=st.session_state['market_rates']['USD']*100, format="%.2f") / 100
 
-            if curr == 'USD':
-                # 달러 포지션: 스케줄별 직접 할인
-                usd_pv_val = get_present_value(amt, r_usd, days)
-                krw_pv_val = usd_pv_val * sim_spot
+            st.subheader("🚩 위험 분석 설정")
+            with st.container(border=True):
+                budget_rate = st.number_input("예산 환율 (Budget Line)", value=1350.0, step=1.0)
+                hedge_rate = st.number_input("헤지 환율 (Hedge Target)", value=1330.0, step=1.0)
+            
+            iter_count = st.select_slider("시뮬레이션 횟수", options=[500, 1000, 2000], value=1000)
+
+        with col_main:
+            # --- 1. 포트폴리오 노출액(PV) 계산 ---
+            valuation_date = datetime.now()
+            total_usd_pv = 0.0
+            for _, row in df_sim.iterrows():
+                target_date = pd.to_datetime(row['Date'])
+                days = max((target_date - valuation_date).days, 0)
+                curr = row['Currency']
+                amt = float(row['Amount']) if str(row['Position']).capitalize() == 'Long' else -abs(float(row['Amount']))
+                if curr == 'USD':
+                    total_usd_pv += get_present_value(amt, r_usd, days)
+                else:
+                    curr_spot = float(real_rates.get(curr, 0))
+                    spot_in_usd = curr_spot / sim_spot if sim_spot != 0 else 0
+                    fwd_rate = get_forward_rate(spot_in_usd, st.session_state['market_rates'].get(curr, 0.02), r_usd, days)
+                    total_usd_pv += get_present_value(amt * fwd_rate, r_usd, days)
+
+            # --- 2. 시뮬레이션 엔진 ---
+            steps = sim_days
+            dt = 1/365
+            paths = np.zeros((steps, iter_count))
+            paths[0] = sim_spot
+            for t in range(1, steps):
+                rand = np.random.standard_normal(iter_count)
+                paths[t] = paths[t-1] * np.exp((r_krw - r_usd - 0.5 * volatility**2) * dt + volatility * np.sqrt(dt) * rand)
+            
+            ending_prices = paths[-1]
+            
+            # --- 3. [최종 교정] 포지션별 리스크 및 헤지 로직 ---
+            is_export = total_usd_pv >= 0 # 양수 = 수출(Long)
+
+            if is_export:
+                # 수출(Long): 환율 하락이 위험, 하락 시 헤지 실행
+                # 위험: 만기 시 환율이 예산보다 낮을 확률
+                prob_breach = (ending_prices < budget_rate).mean() * 100
+                # 헤지: 기간 중 한 번이라도 환율이 헤지 환율 이하로 '하락'할 확률 (Lower Touch)
+                reached_hedge = np.any(paths <= hedge_rate, axis=0)
+                risk_label, risk_delta = "예산 하회(위험) 확률", "Shortfall Risk"
             else:
-                # 이종통화: 선도환율 적용 후 달러 현가화
-                curr_spot = float(real_rates.get(curr, 0))
-                spot_in_usd = curr_spot / sim_spot if sim_spot != 0 else 0
-                fwd_rate = get_forward_rate(spot_in_usd, st.session_state['market_rates'].get(curr, 0.02), r_usd, days)
-                usd_pv_val = get_present_value(amt * fwd_rate, r_usd, days)
-                krw_pv_val = usd_pv_val * sim_spot
+                # 수입(Short): 환율 상승이 위험, 상승 시 헤지 실행
+                # 위험: 만기 시 환율이 예산보다 높을 확률
+                prob_breach = (ending_prices > budget_rate).mean() * 100
+                # 헤지: 기간 중 한 번이라도 환율이 헤지 환율 이상으로 '상승'할 확률 (Upper Touch)
+                reached_hedge = np.any(paths >= hedge_rate, axis=0)
+                risk_label, risk_delta = "예산 상회(위험) 확률", "Breach Risk"
+            
+            prob_reach_hedge = reached_hedge.mean() * 100
 
-            portfolio_results.append({'USD_PV': usd_pv_val, 'KRW_PV': krw_pv_val})
+            # --- 4. 상단 지표 (USD PV 포함) ---
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("순포지션 (USD PV)", f"${total_usd_pv:,.0f}")
+            m2.metric(f"{sim_days}일 후 예상 환율", f"₩{np.median(ending_prices):,.2f}")
+            m3.metric(risk_label, f"{prob_breach:.1f}%", delta=risk_delta, delta_color="inverse")
+            m4.metric("헤지 환율 도달 확률", f"{prob_reach_hedge:.1f}%", delta="Hedge Execution")
 
-        df_p = pd.DataFrame(portfolio_results)
-        total_usd_pv = df_p['USD_PV'].sum()
-        total_krw_pv = df_p['KRW_PV'].sum()
-        
-        # 포트폴리오 BEP (손익분기점 환율)
-        bep = total_krw_pv / total_usd_pv if abs(total_usd_pv) > 0.1 else sim_spot
+            # --- 5. 시각화 (기존 스타일 유지) ---
+            c_chart1, c_chart2 = st.columns(2)
+            with c_chart1:
+                st.subheader("📈 환율 경로 시뮬레이션")
+                fig_path = go.Figure()
+                x_axis = [valuation_date + timedelta(days=i) for i in range(steps)]
+                fig_path.add_trace(go.Scatter(x=x_axis, y=np.percentile(paths, 95, axis=1), line=dict(width=0), showlegend=False))
+                fig_path.add_trace(go.Scatter(x=x_axis, y=np.percentile(paths, 5, axis=1), fill='tonexty', fillcolor='rgba(0, 100, 255, 0.1)', name='90% 신뢰구간'))
+                fig_path.add_trace(go.Scatter(x=x_axis, y=np.median(paths, axis=1), line=dict(color='blue', width=2), name='Median'))
+                fig_path.add_hline(y=budget_rate, line_dash="dot", line_color="red", annotation_text="Budget")
+                fig_path.add_hline(y=hedge_rate, line_dash="dash", line_color="green", annotation_text="Hedge")
+                fig_path.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                st.plotly_chart(fig_path, use_container_width=True)
 
-        # --- 몬테카를로 시뮬레이션 엔진 (GBM 모델) ---
-        steps = 90  # 향후 90일 예측
-        dt = 1/365
-        paths = np.zeros((steps, iter_count))
-        paths[0] = sim_spot
-        
-        for t in range(1, steps):
-            rand = np.random.standard_normal(iter_count)
-            # 수식: Drift(내외금리차) + Diffusion(변동성)
-            drift = (r_krw - r_usd - 0.5 * volatility**2) * dt
-            diffusion = volatility * np.sqrt(dt) * rand
-            paths[t] = paths[t-1] * np.exp(drift + diffusion)
+            with c_chart2:
+                st.subheader("📊 만기 환율 분포")
+                fig_hist = go.Figure()
+                fig_hist.add_trace(go.Histogram(x=ending_prices, nbinsx=50, marker_color='lightgray', opacity=0.7))
+                fig_hist.add_vline(x=np.median(ending_prices), line_width=2, line_color="blue", annotation_text="중앙값")
+                fig_hist.add_vline(x=budget_rate, line_dash="dot", line_color="red", line_width=2, annotation_text="예산")
+                fig_hist.add_vline(x=hedge_rate, line_dash="dash", line_color="green", line_width=2, annotation_text="헤지")
+                fig_hist.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10))
+                st.plotly_chart(fig_hist, use_container_width=True)
 
-        # --- 결과 표시 대시보드 ---
-        st.divider()
-        m1, m2, m3 = st.columns(3)
-        m1.metric("총 노출액 (USD PV)", f"${total_usd_pv:,.2f}")
-        m2.metric("포트폴리오 BEP", f"₩{bep:,.2f}", delta=f"{bep - target_rate:,.2f} (vs 목표)")
-        
-        # VaR (95% 신뢰수준 최대 손실액)
-        ending_prices = paths[-1]
-        var_95_price = np.percentile(ending_prices, 5) if total_usd_pv > 0 else np.percentile(ending_prices, 95)
-        var_amount = abs(total_usd_pv * (bep - var_95_price))
-        m3.metric("VaR (95% 신뢰수준)", f"₩{var_amount:,.0f}", help="90일 내 발생 가능한 최대 예상 손실")
-
-        # 시각화 (Plotly)
-        fig = go.Figure()
-        x_axis = [valuation_date + timedelta(days=i) for i in range(steps)]
-        
-        # 확률 구간 표시
-        fig.add_trace(go.Scatter(x=x_axis, y=np.percentile(paths, 95, axis=1), line=dict(width=0), showlegend=False))
-        fig.add_trace(go.Scatter(x=x_axis, y=np.percentile(paths, 5, axis=1), fill='tonexty', 
-                                 fillcolor='rgba(255, 0, 0, 0.1)', name='신뢰구간 (95%)'))
-        
-        # 중간 경로 (Median)
-        fig.add_trace(go.Scatter(x=x_axis, y=np.median(paths, axis=1), line=dict(color='blue', width=2), name='예상 경로 (Median)'))
-        
-        # BEP 선 표시
-        fig.add_hline(y=bep, line_dash="dash", line_color="green", annotation_text="BEP Line")
-        
-        fig.update_layout(title="USD/KRW 환율 시뮬레이션 (90일)", xaxis_title="날짜", yaxis_title="환율 (KRW)", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+            # --- 6. 민감도 표 ---
+            st.subheader("📉 확률 구간별 예상 손익")
+            percentiles = [5, 25, 50, 75, 95]
+            sensitivity_data = []
+            for p in percentiles:
+                price = np.percentile(ending_prices, p)
+                diff = price - sim_spot
+                diff_pct = (diff / sim_spot) * 100 if sim_spot != 0 else 0
+                pnl = (price - budget_rate) * total_usd_pv
+                pnl_str = f"₩{pnl:,.0f}" if pnl >= 0 else f"-₩{abs(pnl):,.0f}"
+                sensitivity_data.append({
+                    "신뢰 구간": f"{p}%", "예상 환율": f"₩{price:,.2f}",
+                    "환율 변동폭": f"{diff:+,.2f} ({diff_pct:+.2f}%)",
+                    "예산 대비 차액": f"{price - budget_rate:+,.2f}",
+                    "예상 평가손익(KRW)": pnl_str
+                })
+            st.table(pd.DataFrame(sensitivity_data))
 
     else:
         st.info("💡 분석할 데이터가 없습니다. 탭 1에서 데이터를 입력해 주세요.")
