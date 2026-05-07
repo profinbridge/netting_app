@@ -261,7 +261,7 @@ with tab3:
                 budget_rate = st.number_input("예산 환율 (Budget Line)", value=1350.0, step=1.0)
                 hedge_rate = st.number_input("헤지 환율 (Hedge Target)", value=1330.0, step=1.0)
             
-            iter_count = st.select_slider("시뮬레이션 횟수", options=[500, 1000, 2000], value=1000)
+            iter_count = st.select_slider("시뮬레이션 횟수", options=[1000, 2000, 3000, 4000, 5000], value=1000)
 
         with col_main:
             # --- 1. 포트폴리오 노출액(PV) 계산 ---
@@ -300,28 +300,29 @@ with tab3:
                 prob_breach = (ending_prices < budget_rate).mean() * 100
                 # 헤지: 기간 중 한 번이라도 환율이 헤지 환율 이하로 '하락'할 확률 (Lower Touch)
                 reached_hedge = np.any(paths <= hedge_rate, axis=0)
-                risk_label, risk_delta = "예산 하회(위험) 확률", "Shortfall Risk"
+                risk_label, risk_delta = "예산 환율 하회 확률", "Breach Risk"
             else:
                 # 수입(Short): 환율 상승이 위험, 상승 시 헤지 실행
                 # 위험: 만기 시 환율이 예산보다 높을 확률
                 prob_breach = (ending_prices > budget_rate).mean() * 100
                 # 헤지: 기간 중 한 번이라도 환율이 헤지 환율 이상으로 '상승'할 확률 (Upper Touch)
                 reached_hedge = np.any(paths >= hedge_rate, axis=0)
-                risk_label, risk_delta = "예산 상회(위험) 확률", "Breach Risk"
+                risk_label, risk_delta = "예산 환율 상회 확률", "Breach Risk"
             
             prob_reach_hedge = reached_hedge.mean() * 100
 
-            # --- 4. 상단 지표 (USD PV 포함) ---
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("순포지션 (USD PV)", f"${total_usd_pv:,.0f}")
-            m2.metric(f"{sim_days}일 후 예상 환율", f"₩{np.median(ending_prices):,.2f}")
-            m3.metric(risk_label, f"{prob_breach:.1f}%", delta=risk_delta, delta_color="inverse")
-            m4.metric("헤지 환율 도달 확률", f"{prob_reach_hedge:.1f}%", delta="Hedge Execution")
-
+            # --- 4. 상단 지표 요약 (USD PV 포함 테두리 박스 그룹화) ---
+            with st.container(border=True): # 이 줄을 추가하여 4개 항목을 그룹으로 묶고 테두리 표시
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("순포지션 (USD PV)", f"${total_usd_pv:,.0f}")
+                m2.metric(f"{sim_days}일 후 예상 환율", f"₩{np.median(ending_prices):,.2f}")
+                m3.metric(risk_label, f"{prob_breach:.1f}%", delta=risk_delta, delta_color="inverse")
+                m4.metric("헤지 환율 터치 확률", f"{prob_reach_hedge:.1f}%", delta="Hedge recommended")
+ 
             # --- 5. 시각화 (기존 스타일 유지) ---
             c_chart1, c_chart2 = st.columns(2)
             with c_chart1:
-                st.subheader("📈 환율 경로 시뮬레이션")
+                st.subheader("📈 환율 경로 예측")
                 fig_path = go.Figure()
                 x_axis = [valuation_date + timedelta(days=i) for i in range(steps)]
                 fig_path.add_trace(go.Scatter(x=x_axis, y=np.percentile(paths, 95, axis=1), line=dict(width=0), showlegend=False))
@@ -353,9 +354,9 @@ with tab3:
                 pnl = (price - budget_rate) * total_usd_pv
                 pnl_str = f"₩{pnl:,.0f}" if pnl >= 0 else f"-₩{abs(pnl):,.0f}"
                 sensitivity_data.append({
-                    "신뢰 구간": f"{p}%", "예상 환율": f"₩{price:,.2f}",
-                    "환율 변동폭": f"{diff:+,.2f} ({diff_pct:+.2f}%)",
-                    "예산 대비 차액": f"{price - budget_rate:+,.2f}",
+                    "분포 구간": f"하위 {p}%", "예상 환율": f"₩{price:,.2f}",
+                    "환율 변동폭(원)": f"{diff:+,.2f} ({diff_pct:+.2f}%)",
+                    "예산 환율과의 갭(원)": f"{price - budget_rate:+,.2f}",
                     "예상 평가손익(KRW)": pnl_str
                 })
             st.table(pd.DataFrame(sensitivity_data))
