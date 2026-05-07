@@ -440,12 +440,75 @@ with tab3:
                 pnl = (price - budget_rate) * total_usd_pv
                 pnl_str = f"₩{pnl:,.0f}" if pnl >= 0 else f"-₩{abs(pnl):,.0f}"
                 sensitivity_data.append({
-                    "분포 구간": f"하위 {p}%", "예상 환율": f"₩{price:,.2f}",
+                    "분포 구간": f"하위 {p}%", "예측 환율": f"₩{price:,.2f}",
                     "환율 변동폭(원)": f"{diff:+,.2f} ({diff_pct:+.2f}%)",
                     "예산 환율과의 갭(원)": f"{price - budget_rate:+,.2f}",
                     "예상 평가손익(원)": pnl_str
                 })
             st.table(pd.DataFrame(sensitivity_data))
+
+            # --- 7. 헤지 성과 분석 (Hedge Performance Analysis) ---
+            st.divider()
+            st.subheader("🛡️ 헤지 성과 분석 (Hedge vs. Unhedged)")
+            st.write("") # 빈 행 추가
+
+            # 성과 분석을 위한 가상 시나리오 계산
+            # 만기 환율이 중앙값(Median)일 때를 가정
+            final_price = np.median(ending_prices)
+            
+            # 1) 헤지 안 했을 때 손익
+            unhedged_pnl = (final_price - budget_rate) * total_usd_pv
+            
+            # 2) 100% 헤지 했을 때 손익 (헤지 환율로 고정)
+            hedged_pnl = (hedge_rate - budget_rate) * total_usd_pv
+            
+            # 3) 헤지 효율성 (Hedge Effectiveness)
+                        
+            # (헤지 시 손익 - 미헤지 시 손익) / 예산 대비 노출액 절대값 등으로 환산
+            # 여기서는 단순 손익 금액 차이의 비율을 보여줍니다.
+            diff_pnl = hedged_pnl - unhedged_pnl
+            
+            # 개선율 계산 (분모가 0인 경우 대비)
+            if unhedged_pnl != 0:
+                perf_ratio = (diff_pnl / abs(unhedged_pnl)) * 100
+            else:
+                perf_ratio = 0.0
+
+            if is_export:
+                # 수출: 환율이 헤지환율보다 낮아지면 헤지가 잘한 것(개선), 높으면 기회손실
+                if final_price < hedge_rate:
+                    efficiency = f"{perf_ratio:+.1f}% 개선"
+                else:
+                    efficiency = f"{perf_ratio:+.1f}% 기회비용"
+            else:
+                # 수입: 환율이 헤지환율보다 높아지면 헤지가 잘한 것(개선), 낮으면 기회손실
+                if final_price > hedge_rate:
+                    efficiency = f"{perf_ratio:+.1f}% 개선"
+                else:
+                    efficiency = f"{perf_ratio:+.1f}% 기회비용"
+
+            # 성과 지표 요약 (작은 폰트 스타일 유지)
+            perf_col1, perf_col2, perf_col3 = st.columns(3)
+            
+            with perf_col1:
+                st.metric("미헤지 시 예상 손익", f"₩{unhedged_pnl:,.0f}", delta=None)
+                st.caption("만기 시점 시장환율(Median) 적용")
+
+            with perf_col2:
+                st.metric("헤지 실행 시 확정 손익", f"₩{hedged_pnl:,.0f}", delta="확정 손익", delta_color="off")
+                st.caption(f"헤지 목표 환율(₩{hedge_rate:,.2f}) 적용")
+
+            with perf_col3:
+                st.metric("헤지 기대 효과", efficiency)
+                st.caption("")
+
+            # 추가 가이드 (Expander - 작은 폰트 적용됨)
+            with st.expander("💡 헤지 성과 분석 활용 팁", expanded=False):
+                st.markdown(f"""
+                * **분석 취지**: 본 지표는 현재 설정한 헤지 환율(₩{hedge_rate:,.2f})로 모든 포지션을 헤지했을 때, 예산 환율 대비 손익 확정액을 보여줍니다.
+                * **의사결정 가이드**: '헤지 기대 효과'가 음수(+)로 나타난다면, 헤지로 인한 기회 비용이 발생함을 의미합니다.
+                * **주의**: 위 계산은 단순 만기 시점 환율 비교이며, 실제 시장 상황은 고려되지 않은 수치입니다.
+                """)
 
     else:
         st.info("💡 분석할 데이터가 없습니다. 탭 1에서 데이터를 입력해 주세요.")
