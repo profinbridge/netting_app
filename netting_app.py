@@ -15,7 +15,7 @@ st.markdown("""
     <style>
     /* 1. 전체 타이틀 (H1) 크기 조정 */
     h1 {
-        font-size: 32px !important;
+        font-size: 36px !important;
         font-weight: 700 !important;
         padding-bottom: 20px !important;
     }
@@ -42,6 +42,27 @@ st.markdown("""
 
 st.markdown("""
     <style>
+    /* 1. 사이드바 내 모든 버튼의 폰트 크기 및 높이 조정 */
+    div[data-testid="stSidebar"] button {
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+        min-height: 30px !important;
+    }
+    
+    /* 2. 사이드바 내 도움말(help) 아이콘 크기 조정 */
+    div[data-testid="stSidebar"] .stButton svg {
+        width: 12px !important;
+        height: 12px !important;
+    }
+
+    /* 3. 사이드바 내 섹션 타이틀(💡 체험하기 등) 크기 조정 */
+    div[data-testid="stSidebar"] .stMarkdown h3 {
+        font-size: 14px !important;
+        margin-bottom: 10px !important;
+    }
+
     /* --- 기존 헤더 설정 (유지) --- */
     h1 { font-size: 26px !important; }
     h2 { font-size: 22px !important; padding-bottom: 25px !important; }
@@ -77,7 +98,46 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📊 FX 포지션 관리 및 몬테카를로 시뮬레이터")
+st.title("📊 FX_RISK 시뮬레이터")
+
+# --- [신규 추가] 체험하기 버튼 및 데이터 로드 로직 ---
+st.sidebar.markdown("### 💡 체험하기")
+
+# 버튼 클릭 시 세션 상태에 샘플 데이터 주입
+if st.sidebar.button("🚗 수출기업 샘플 데이타 로드", help="실시간 리스크를 시뮬레이션합니다. 데이타 로드 후 아래 **변경사항 저장** 버튼을 클릭하세요"):
+    # Tab 1용 데이터
+    st.session_state['main_df'] = pd.DataFrame([
+        {'Date': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Long', 'Amount': 700000.0, 'Budget Rate': 1380.0, 'Netted': True, 'Remark1': "미국 수출 대금(1차)", 'Remark2': ""},
+        {'Date': (datetime.now() + timedelta(days=60)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Long', 'Amount': 500000.0, 'Budget Rate': 1380.0, 'Netted': True, 'Remark1': "미국 수출 대금(2차)", 'Remark2': ""},
+        {'Date': (datetime.now() + timedelta(days=45)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Short', 'Amount': 200000.0, 'Budget Rate': 1380.0, 'Netted': True, 'Remark1': "부품 수입 결제", 'Remark2': ""}
+    ])
+    
+    # Tab 3용 설정값 (환율 1,450원 기준)
+    st.session_state['sim_spot'] = 1450.0
+    st.session_state['sim_days'] = 90
+    st.session_state['volatility'] = 15.0
+    st.session_state['budget_rate'] = 1380.0
+    st.session_state['hedge_rate'] = 1430.0
+    
+    st.sidebar.success("현재 환율 1,450원 예산 환율 1,380원 기준 시나리오 로드 완료!")
+
+    # --- [신규 추가] 수입기업 샘플 버튼 로직 ---
+if st.sidebar.button("📦 수입기업 샘플 데이타 로드", help="실시간 리스크를 시뮬레이션합니다. 데이타 로드 후 아래 **변경사항 저장** 버튼을 클릭하세요"):
+    # Tab 1용 데이터: 수입 결제 2건 + 소액 수출 네팅
+    st.session_state['main_df'] = pd.DataFrame([
+        {'Date': (datetime.now() + timedelta(days=20)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Short', 'Amount': 600000.0, 'Budget Rate': 1420.0, 'Netted': True, 'Remark1': "원자재 수입결제(A사)", 'Remark2': ""},
+        {'Date': (datetime.now() + timedelta(days=50)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Short', 'Amount': 400000.0, 'Budget Rate': 1420.0, 'Netted': True, 'Remark1': "설비 도입 잔금", 'Remark2': ""},
+        {'Date': (datetime.now() + timedelta(days=40)).strftime('%Y-%m-%d'), 'Currency': 'USD', 'Position': 'Long', 'Amount': 100000.0, 'Budget Rate': 1420.0, 'Netted': True, 'Remark1': "샘플 수출 대금 유입", 'Remark2': ""}
+    ])
+    
+    # Tab 3용 설정값 (환율 1,450원 기준 수입 리스크 상황)
+    st.session_state['sim_spot'] = 1450.0      # 현재 환율
+    st.session_state['sim_days'] = 60        # 분석 기간
+    st.session_state['volatility'] = 12.0     # 변동성 12%
+    st.session_state['budget_rate'] = 1420.0  # 예산 환율 (이미 넘어서서 손실 구간임)
+    st.session_state['hedge_rate'] = 1470.0   # 손절 혹은 추가 헤지 타겟
+    
+    st.sidebar.success("현재 환율 1,450원 예산 환율 1,420원 기준 시나리오 로드 완료!")
 
 # --- 공통 함수 (Global) ---
 def get_forward_rate(spot, r_base, r_quote, days):
@@ -114,7 +174,12 @@ def get_realtime_rates():
 
 real_rates, last_update = get_realtime_rates()
 
-tab1, tab2, tab3 = st.tabs(["📥 데이터 입력 및 편집", "📅 캐시플로우", "🧪 실시간 리스크 시뮬레이션"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📥 데이터 입력 및 편집", 
+    "📅 캐시플로우", 
+    "🧪 실시간 리스크 시뮬레이션",
+    "📖 이용 가이드"
+])
 
 # --- Tab 1: 데이터 입력 및 편집 ---
 with tab1:
@@ -310,7 +375,7 @@ with tab2:
 
 # --- Tab 3: 실시간 리스크 시뮬레이션 및 리스크 분석 ---
 with tab3:
-    st.header("🧪 외환 리스크 시뮬레이션 및 리스크 분석")
+    st.header("🧪 실시간 리스크 시뮬레이션 및 리스크 분석")
 
     # --- 모델 가정 설명 ---
     with st.expander("ℹ️ 시뮬레이션 모델 가정 및 데이터 출처 안내", expanded=False):
@@ -336,7 +401,11 @@ with tab3:
             st.subheader("🌐 시장 변수 설정")
             with st.container(border=True):
                 cur_usd_spot = float(real_rates.get("USD", 1380.0))
-                sim_spot = st.number_input("현재 환율 (Spot)", value=cur_usd_spot, step=1.0)
+                sim_spot = st.number_input(
+                    "현재 환율 (Spot)", 
+                    value=st.session_state.get('sim_spot', cur_usd_spot), # 여기서 결정됩니다!
+                    step=1.0
+                )
                 sim_days = st.slider("분석 기간 (일)", 10, 365, 90)
                 volatility = st.slider("시장 변동성 (연 %)", 5.0, 30.0, 10.0) / 100
                 r_krw = st.number_input("원화 금리 (%)", value=st.session_state['market_rates']['KRW']*100, format="%.2f") / 100
@@ -344,7 +413,11 @@ with tab3:
 
             st.subheader("🚩 위험 분석 설정")
             with st.container(border=True):
-                budget_rate = st.number_input("예산 환율 (Budget Line)", value=1350.0, step=1.0)
+                budget_rate = st.number_input(
+                    "예산 환율 (Budget Line)", 
+                    value=st.session_state.get('budget_rate', 1350.0), 
+                    step=1.0
+                )
                 hedge_rate = st.number_input("헤지 환율 (Hedge Target)", value=1400.0, step=1.0)
             
             iter_count = st.select_slider("시뮬레이션 횟수", options=[5000, 10000, 20000, 30000, 40000, 50000], value=10000)
@@ -422,13 +495,62 @@ with tab3:
             with c_chart2:
                 st.subheader("📊 만기 환율 분포")
                 fig_hist = go.Figure()
-                fig_hist.add_trace(go.Histogram(x=ending_prices, nbinsx=50, marker_color='lightgray', opacity=0.7))
-                fig_hist.add_vline(x=np.median(ending_prices), line_width=2, line_color="blue", annotation_text="중앙값")
-                fig_hist.add_vline(x=budget_rate, line_dash="dot", line_color="red", line_width=2, annotation_text="예산")
-                fig_hist.add_vline(x=hedge_rate, line_dash="dash", line_color="green", line_width=2, annotation_text="헤지")
-                fig_hist.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10))
-                st.plotly_chart(fig_hist, use_container_width=True)
+                
+                # 1. 히스토그램 본체 (범례 제외)
+                fig_hist.add_trace(go.Histogram(
+                    x=ending_prices, 
+                    nbinsx=50, 
+                    marker_color='lightgray', 
+                    opacity=0.7,
+                    showlegend=False # 히스토그램 자체는 범례에서 제외
+                ))
+                
+                # 2. 중앙값 선 (범례 표시)
+                fig_hist.add_vline(
+                    x=np.median(ending_prices), 
+                    line_width=2, 
+                    line_color="blue", 
+                    name="중앙값(Median)" # 범례에 표시될 이름
+                )
+                # 범례 전용 가상 트레이스 (vline은 범례에 자동으로 안 잡히므로 추가)
+                fig_hist.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='blue', width=2), name='중앙값(Median)'))
 
+                # 3. 예산 환율 선 (범례 표시)
+                fig_hist.add_vline(
+                    x=budget_rate, 
+                    line_dash="dot", 
+                    line_color="red", 
+                    line_width=2,
+                    name="예산 환율(Budget)"
+                )
+                fig_hist.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='red', width=2, dash='dot'), name='예산 환율(Budget)'))
+
+                # 4. 헤지 환율 선 (범례 표시)
+                fig_hist.add_vline(
+                    x=hedge_rate, 
+                    line_dash="dash", 
+                    line_color="green", 
+                    line_width=2,
+                    name="헤지 목표(Hedge)"
+                )
+                fig_hist.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='green', width=2, dash='dash'), name='헤지 목표(Hedge)'))
+
+                # 5. 레이아웃 설정 (범례 위치 및 이름표 제거)
+                fig_hist.update_layout(
+                    height=350, 
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    legend=dict(
+                        orientation="h",       # 가로 방향 범례
+                        yanchor="bottom", 
+                        y=1.02,                # 그래프 상단에 배치
+                        xanchor="right", 
+                        x=1
+                    ),
+                    xaxis_title="만기 환율 (₩)",
+                    yaxis_title="빈도수"
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
+                
             # --- 6. 민감도 표 ---
             st.subheader("📉 확률 구간별 예상 손익")
             percentiles = [5, 25, 50, 75, 95]
@@ -512,3 +634,65 @@ with tab3:
 
     else:
         st.info("💡 분석할 데이터가 없습니다. 탭 1에서 데이터를 입력해 주세요.")
+
+with tab4:
+# --- [신규 추가] Tab 4 전용 폰트 스타일 ---
+    st.markdown("""
+        <style>
+        /* 가이드 박스(container) 내부의 폰트 크기 조정 */
+        [data-testid="stVerticalBlock"] .stMarkdown p {
+            font-size: 13.5px !important;
+            line-height: 1.6 !important;
+            color: #444444 !important;
+        }
+        /* 불렛 포인트(리스트) 크기 조정 */
+        [data-testid="stVerticalBlock"] .stMarkdown li {
+            font-size: 13px !important;
+            color: #444444 !important;
+        }
+        /* 섹션 내 작은 제목 크기 조정 */
+        [data-testid="stVerticalBlock"] .stMarkdown h3 {
+            font-size: 16px !important;
+            color: #1F1F1F !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.header("📖 FX_RISK 시뮬레이터 이용 가이드")
+    
+    col_guide1, col_guide2 = st.columns(2)
+    
+    with col_guide1:
+        with st.container(border=True):
+            st.subheader("💡 주요 기능 안내")
+            st.markdown("""
+            1. **통합 포지션 관리**: 수출(Long)과 수입(Short) 포지션을 한곳에 입력하여 **실질적인 외화 노출액(Net Exposure)**을 산출합니다.
+            2. **현가(PV) 분석**: 미래의 외화 금액을 단순히 합산하지 않고, 각 국가의 **무위험 금리를 반영하여 현재 가치**로 환산합니다.
+            3. **몬테카를로 시뮬레이션**: 단편적인 선물 환율 전망이 아닌, **기하 브라운 운동(GBM)** 모델을 통해 10,000번 이상의 가상 경로를 생성하여 확률적 리스크를 분석합니다.
+            """)
+            
+    with col_guide2:
+        with st.container(border=True):
+            st.subheader("🚀 체험하기 (Quick Start)")
+            st.markdown("""
+            * **STEP 1**: 왼쪽 사이드바의 **[체험하기]** 버튼을 눌러 예시 데이터를 불러오세요.
+            * **STEP 2**: **[캐시플로우]** 탭에서 날짜별로 네팅된 현가 포지션을 확인합니다.
+            * **STEP 3**: **[리스크 시뮬레이션]** 탭에서 시장 변동성과 예산 환율을 설정하여 우리 회사의 안전 구간을 확인하세요.
+            """)
+
+    st.divider()
+    st.subheader("🔍 용어 설명")
+    with st.expander("현가(Present Value) 할인이 왜 필요한가요?"):
+        st.write("3개월 뒤의 100만 불과 오늘 당장의 100만 불은 금리 차이만큼 가치가 다릅니다. 이 시뮬레이터는 정확한 리스크 측정을 위해 모든 미래 현금흐름을 현재 가치로 할인하여 분석합니다.")
+    
+    with st.expander("몬테카를로 시뮬레이션의 결과는 어떻게 해석하나요?"):
+        st.write("중앙값(Median)은 가장 확률 높은 미래 환율이며, 90% 신뢰구간(확률 구름)은 환율이 움직일 수 있는 극단적인 범위를 보여줍니다. 예산 환율 돌파 확률이 높다면 즉각적인 헤지 전략이 필요함을 시사합니다.")
+
+    with st.expander("시장 변동성(Volatility)이란 무엇이며, 왜 설정해야 하나요?"):
+        st.markdown("""
+        **시장 변동성**은 환율이 일정 기간 동안 얼마나 위아래로 크게 움직이는지를 나타내는 지표입니다.
+        
+        * **리스크의 크기**: 변동성을 높게 설정할수록(예: 15% 이상) 시뮬레이션 결과의 '확률 구름'이 넓게 퍼집니다. 이는 미래 환율의 불확실성이 크다는 것을 의미하며, 예산 환율을 벗어날 위험도 함께 커집니다.
+        * **시뮬레이션에서의 역할**: 본 시뮬레이터는 **기하 브라운 운동(GBM)** 모델을 사용합니다. 이때 변동성은 환율이 무작위로 움직이는 '진폭'을 결정하며, 10,000번의 시뮬레이션이 각기 다른 경로를 그리게 만드는 핵심 변수입니다.
+        * **설정 팁**: 평상시에는 8~10% 내외를 사용하지만, 경제 위기나 금리 급변동기에는 15% 이상으로 설정하여 최악의 시나리오(Stress Test)를 점검하는 것이 좋습니다.
+        """)
